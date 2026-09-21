@@ -1,6 +1,6 @@
-# nice·qrcode
+# nice·qrcode-home
 
-**好东西，值得留在身边。** 一个极简黑白风格的网址与二维码收藏主页 —— 纯前端、开源、数据全部留在你的浏览器里。
+一个极简黑白风格的网址与二维码收藏主页 —— 纯前端、开源、数据全部留在你的浏览器里。
 
 ## 特性
 
@@ -47,9 +47,9 @@ MIT
 
 ---
 
-# nice·qrcode (English)
+# nice-qrcode-home (English)
 
-**Good finds, kept.** A minimalist black-and-white home for your links and QR codes — fully front-end, open source, and all data stays in your browser.
+A minimalist black-and-white home for your links and QR codes — fully front-end, open source, and all data stays in your browser.
 
 ## Features
 
