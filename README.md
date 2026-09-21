@@ -2,6 +2,8 @@
 
 一个极简黑白风格的网址与二维码收藏主页 —— 纯前端、开源、数据全部留在你的浏览器里。
 
+**Try Out Online Here! ** https://nice-qrcode-home.freddyhu2007.workers.dev/
+
 ## 特性
 
 - **便捷导入**：粘贴网址 / 拖入或 Ctrl+V 粘贴二维码截图 / 摄像头扫码，支持批量
