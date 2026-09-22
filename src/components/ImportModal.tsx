@@ -1,17 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, ChevronLeft, ImagePlus, Link2, Loader2, Upload, X } from 'lucide-react';
+import {
+  Camera,
+  Check,
+  ChevronLeft,
+  ImagePlus,
+  Link2,
+  ListPlus,
+  Loader2,
+  QrCode,
+  Upload,
+  X,
+} from 'lucide-react';
 import { Modal } from './Modal';
 import { AssetImage } from './AssetImage';
 import { useStore } from '../store';
-import { makeCard, classify } from '../core/content';
-import { decoderPipeline } from '../core/decode';
+import { makeCard, classify, domain, normalizeContent } from '../core/content';
+import { decodeAll } from '../core/decode';
 import { fetchMetadata } from '../core/metadata';
+import { contentHash, parseAppLink, type ManifestItem } from '../core/app';
 import { MAX_IMAGE_BYTES } from '../core/storage';
 import { type Asset, type Card, cardTypes } from '../core/types';
 import { errorMessage } from '../lib';
 import { fmt } from '../i18n';
 import { useI18n } from '../useI18n';
+import { gsap, reducedMotion } from '../anim';
 type Draft = { card: Card; asset?: Asset };
+type MultiItem = { content: string; title: string; on: boolean };
 export function CardFields({ card, onChange }: { card: Card; onChange: (card: Card) => void }) {
   const groups = useStore((s) => s.groups);
   const t = useI18n();
@@ -119,24 +133,49 @@ export function ImportModal({
   const [text, setText] = useState('');
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [index, setIndex] = useState(0);
+  const [multi, setMulti] = useState<MultiItem[] | null>(null);
+  const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [cameraOn, setCameraOn] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const multiList = useRef<HTMLUListElement>(null);
   const alive = useRef(true);
   const started = useRef(false);
+  const onCount = multi?.filter((item) => item.on).length ?? 0;
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
     };
   }, []);
+  useEffect(() => {
+    const el = multiList.current;
+    if (el?.children.length && !reducedMotion())
+      gsap.fromTo(
+        el.children,
+        { opacity: 0, y: 10 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.4,
+          ease: 'power3.out',
+          stagger: 0.035,
+          clearProps: 'opacity,transform',
+        },
+      );
+  }, [multi]);
   async function fromFiles(files: File[]) {
     setBusy(true);
     setError('');
-    const next: Draft[] = [];
+    setMulti(null);
+    setSheet(false);
+    const hits: string[] = [];
     const failures: string[] = [];
+    const undecodable: File[] = [];
+    let manifest: ManifestItem[] | null = null;
+    let marker = false;
     for (const file of files.slice(0, 30)) {
       if (
         !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) ||
@@ -150,26 +189,63 @@ export function ImportModal({
         const tooLarge = bitmap.width * bitmap.height > 24_000_000;
         bitmap.close();
         if (tooLarge) throw new Error(t.importDlg.tooManyPixels);
-        const content = await decoderPipeline.decode(file);
-        const card = makeCard(content ?? '', groupId);
-        // 原图只在解码失败（如小程序花码）时保留；识别成功的二维码随时可重新生成。
-        let asset: Asset | undefined;
-        if (!content) {
-          asset = { id: crypto.randomUUID(), blob: file };
-          card.imageAssetId = asset.id;
-          card.title = file.name.replace(/\.[^.]+$/, '');
+        const found = await decodeAll(file);
+        if (!found.length) {
+          undecodable.push(file);
+          continue;
         }
-        next.push({ card, asset });
+        for (const content of found) {
+          const link = parseAppLink(content);
+          if (link) {
+            marker = true;
+            if (link.items) manifest = link.items;
+          } else if (!hits.includes(content)) hits.push(content);
+        }
       } catch (e) {
         failures.push(file.name + ': ' + errorMessage(e));
       }
     }
-    if (alive.current) {
+    if (!alive.current) return;
+    if (hits.length > 60) {
+      setBusy(false);
+      setError(t.importDlg.tooManyCodes);
+      return;
+    }
+    if (undecodable.length && hits.length)
+      failures.push(fmt(t.importDlg.skippedUndecodable, { n: undecodable.length }));
+    if (!hits.length) {
+      if (marker) {
+        setBusy(false);
+        setError(t.importDlg.sheetOnlyMarker);
+        return;
+      }
+      // 与逐张导入一致：完全解码不了的图（如小程序花码）保留原图进入确认。
+      const next: Draft[] = undecodable.map((file) => {
+        const asset: Asset = { id: crypto.randomUUID(), blob: file };
+        const card = makeCard('', groupId);
+        card.imageAssetId = asset.id;
+        card.title = file.name.replace(/\.[^.]+$/, '');
+        return { card, asset };
+      });
       setDrafts(next);
       setIndex(0);
-      setBusy(false);
-      setError(failures.join('；'));
+    } else if (hits.length === 1 && !marker) {
+      setDrafts([{ card: makeCard(hits[0], groupId) }]);
+      setIndex(0);
+    } else {
+      // 一键导入：分享图（或任何含多个二维码的图片）整体识别，清单还原名称。
+      const names = new Map((manifest ?? []).map(([title, hash]) => [hash, title]));
+      setMulti(
+        hits.map((content) => ({
+          content,
+          title: names.get(contentHash(content)) ?? makeCard(content).title,
+          on: true,
+        })),
+      );
+      setSheet(marker);
     }
+    setBusy(false);
+    setError(failures.join('；'));
   }
   useEffect(() => {
     if (initialFiles.length && !started.current) {
@@ -200,6 +276,7 @@ export function ImportModal({
           video.current,
           (result) => {
             if (stopped) return;
+            setMulti(null);
             setDrafts([{ card: makeCard(result.data, groupId) }]);
             setCameraOn(false);
           },
@@ -249,8 +326,54 @@ export function ImportModal({
       }),
     );
     if (alive.current) {
+      setMulti(null);
       setDrafts(next);
       setIndex(0);
+      setBusy(false);
+    }
+  }
+  async function saveMulti() {
+    if (!multi) return;
+    const chosen = multi.filter((item) => item.on);
+    if (!chosen.length) {
+      setError(t.importDlg.noneSelected);
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const contents = new Set(
+        useStore
+          .getState()
+          .cards.map((c) => c.rawContent)
+          .filter(Boolean),
+      );
+      const entries: Draft[] = [];
+      let skipped = 0;
+      for (const item of chosen) {
+        const content = normalizeContent(item.content);
+        if (contents.has(content)) {
+          skipped++;
+          continue;
+        }
+        const card = makeCard(content, groupId);
+        const title = item.title.trim().slice(0, 200);
+        if (title) card.title = title;
+        entries.push({ card });
+        contents.add(content);
+      }
+      if (!entries.length) {
+        setError(fmt(t.importDlg.allDuplicates, { n: skipped }));
+        setBusy(false);
+        return;
+      }
+      await useStore.getState().saveMany(entries);
+      notify(
+        fmt(t.toast.savedN, { n: entries.length }) + (skipped ? fmt(t.toast.skipped, { n: skipped }) : ''),
+      );
+      onClose();
+    } catch (e) {
+      setError(errorMessage(e));
       setBusy(false);
     }
   }
@@ -300,13 +423,63 @@ export function ImportModal({
   const current = drafts[index];
   return (
     <Modal
-      title={drafts.length ? t.importDlg.confirmTitle : t.importDlg.title}
+      title={
+        multi ? t.importDlg.importTitle : drafts.length ? t.importDlg.confirmTitle : t.importDlg.title
+      }
       onClose={() => {
         if (!busy) onClose();
       }}
     >
       <div className="modal-body">
-        {!drafts.length ? (
+        {multi ? (
+          <>
+            <div className="review-nav">
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() => {
+                  setMulti(null);
+                  setSheet(false);
+                  setError('');
+                }}
+              >
+                <ChevronLeft size={15} />
+                {t.importDlg.back}
+              </button>
+              <span>{fmt(t.importDlg.codesFound, { n: multi.length })}</span>
+              <div />
+            </div>
+            {sheet && (
+              <div className="sheet-banner">
+                <span className="sheet-badge">
+                  <QrCode size={11} />
+                  {t.importDlg.sheetBadge}
+                </span>
+              </div>
+            )}
+            <ul className="multi-list" ref={multiList}>
+              {multi.map((item, i) => (
+                <li key={item.content}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={item.on}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setMulti(multi.map((it, j) => (i === j ? { ...it, on: e.target.checked } : it)))
+                      }
+                    />
+                    <span className="multi-text">
+                      <strong>{item.title}</strong>
+                      <small>{domain(item.content)}</small>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <small className="field-help">{t.importDlg.multiHint}</small>
+          </>
+        ) : !drafts.length ? (
           <>
             <div className="tabs">
               {(
@@ -441,11 +614,17 @@ export function ImportModal({
         </span>
         <button
           className="button primary"
-          disabled={busy || (!drafts.length && tab !== 'link')}
-          onClick={() => void (drafts.length ? save() : fromText())}
+          disabled={
+            busy || (!!multi && !onCount) || (!multi && !drafts.length && tab !== 'link')
+          }
+          onClick={() => void (multi ? saveMulti() : drafts.length ? save() : fromText())}
         >
-          {drafts.length ? <Check size={16} /> : <Link2 size={16} />}{' '}
-          {drafts.length ? fmt(t.importDlg.saveN, { n: drafts.length }) : t.importDlg.continue}
+          {multi ? <ListPlus size={16} /> : drafts.length ? <Check size={16} /> : <Link2 size={16} />}{' '}
+          {multi
+            ? fmt(t.importDlg.importN, { n: onCount })
+            : drafts.length
+              ? fmt(t.importDlg.saveN, { n: drafts.length })
+              : t.importDlg.continue}
         </button>
       </footer>
     </Modal>

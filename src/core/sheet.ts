@@ -1,13 +1,39 @@
 import type { Asset, Card, Settings } from './types';
 import { domain } from './content';
+import { buildAppLink, contentHash, renderAppQr, type ManifestItem } from './app';
 import { qrRenderer } from './qr';
 import { download } from '../lib';
 import { dict, fmt } from '../i18n';
 
+/** Wrap a footer hint for canvas printing; the last line gets an ellipsis. */
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const char of text) {
+    if (line && ctx.measureText(line + char).width > maxWidth) {
+      lines.push(line);
+      if (lines.length === maxLines) {
+        lines[maxLines - 1] = lines[maxLines - 1].slice(0, -1) + '…';
+        return lines;
+      }
+      line = '';
+    }
+    line += char;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 /**
  * Compose a minimalist black-and-white sheet of QR codes and download it as PNG.
  * Cards with rawContent get a freshly rendered QR; mini-program cards fall back
- * to their preserved original image. Returns the number of exported codes.
+ * to their preserved original image. The footer carries the app QR whose link
+ * also encodes a title manifest for one-tap re-import. Returns the export count.
  */
 export async function exportQrSheet({
   title,
@@ -54,10 +80,12 @@ export async function exportQrSheet({
   const cellH = 430;
   const qrSize = 270;
   const headerH = 128;
-  const footerH = 72;
+  const footerQr = 156;
+  const footerH = 226;
+  const gridBottom = margin + headerH + rows * cellH + (rows - 1) * gap;
   const canvas = document.createElement('canvas');
   canvas.width = margin * 2 + cols * cellW + (cols - 1) * gap;
-  canvas.height = margin + headerH + rows * cellH + (rows - 1) * gap + footerH + margin - 48;
+  canvas.height = gridBottom + footerH + 48;
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -105,10 +133,33 @@ export async function exportQrSheet({
       cellW - 16,
     );
   });
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#b3b5b8';
-  ctx.font = '12px Inter, sans-serif';
-  ctx.fillText(t.sheet.footer, canvas.width / 2, canvas.height - 34);
+  // Footer: divider, app QR and a two-line caption. The QR link doubles as the
+  // title manifest that powers one-tap import of this exact sheet.
+  ctx.beginPath();
+  ctx.moveTo(margin, gridBottom + 16);
+  ctx.lineTo(canvas.width - margin, gridBottom + 16);
+  ctx.stroke();
+  const items: ManifestItem[] = bitmaps
+    .filter(({ card }) => card.rawContent.trim())
+    .map(({ card }) => [card.title, contentHash(card.rawContent)]);
+  const appBlob = await renderAppQr(buildAppLink(items), 400);
+  const qrY = gridBottom + 44;
+  if (appBlob) {
+    const appBitmap = await createImageBitmap(appBlob);
+    ctx.drawImage(appBitmap, margin, qrY, footerQr, footerQr);
+    appBitmap.close();
+  }
+  const textX = margin + footerQr + 26;
+  const maxTextW = canvas.width - margin - textX;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#17181a';
+  ctx.font = '600 23px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
+  ctx.fillText(t.sheet.footer, textX, qrY + 64, maxTextW);
+  ctx.fillStyle = '#8b8e91';
+  ctx.font = '14px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
+  wrapText(ctx, t.sheet.scanHint, maxTextW, 3).forEach((line, i) => {
+    ctx.fillText(line, textX, qrY + 96 + i * 22);
+  });
   const blob = await new Promise<Blob>((res, rej) =>
     canvas.toBlob((b) => (b ? res(b) : rej(new Error('合集图片生成失败'))), 'image/png'),
   );

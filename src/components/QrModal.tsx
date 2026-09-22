@@ -8,6 +8,7 @@ import type { Card, Settings } from '../core/types';
 import { qrRenderer } from '../core/qr';
 import { copy, download, errorMessage } from '../lib';
 import { domain } from '../core/content';
+import { APP_URL, buildAppLink, contentHash, renderAppQr } from '../core/app';
 import { gsap, reducedMotion } from '../anim';
 import { fmt } from '../i18n';
 import { useI18n } from '../useI18n';
@@ -115,8 +116,26 @@ export function QrModal({
     ctx.fillStyle = '#7c827b';
     ctx.font = '18px sans-serif';
     ctx.fillText(domain(card.rawContent), 320, 620, 460);
-    ctx.font = '16px sans-serif';
-    ctx.fillText(t.qrDlg.shareFooter, 320, 706);
+    // Footer: app QR (its link carries this card's title manifest) + caption.
+    const link = card.rawContent
+      ? buildAppLink([[card.title.slice(0, 40), contentHash(card.rawContent)]])
+      : APP_URL;
+    const appBlob = await renderAppQr(link, 240, '#18241d');
+    const qrS = 84;
+    const left = 320 - (qrS + 18 + 186) / 2;
+    if (appBlob) {
+      const app = await createImageBitmap(appBlob);
+      ctx.drawImage(app, left, 646, qrS, qrS);
+      app.close();
+    }
+    const textX = left + qrS + 18;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#18241d';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(t.brand, textX, 678);
+    ctx.fillStyle = '#7c827b';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(t.qrDlg.shareFooter, textX, 700, 186);
     const blob = await new Promise<Blob>((res, rej) =>
       canvas.toBlob((b) => (b ? res(b) : rej(new Error(t.qrDlg.shareFailed))), 'image/png'),
     );
