@@ -17,7 +17,7 @@ import { useStore } from '../store';
 import { makeCard, classify, domain, normalizeContent } from '../core/content';
 import { decodeAll } from '../core/decode';
 import { fetchMetadata } from '../core/metadata';
-import { contentHash, parseAppLink, type ManifestItem } from '../core/app';
+import { contentHash, parseAppLink, parseShareLink, type ManifestItem } from '../core/app';
 import { MAX_IMAGE_BYTES } from '../core/storage';
 import { type Asset, type Card, cardTypes } from '../core/types';
 import { errorMessage } from '../lib';
@@ -25,7 +25,7 @@ import { fmt } from '../i18n';
 import { useI18n } from '../useI18n';
 import { gsap, reducedMotion } from '../anim';
 type Draft = { card: Card; asset?: Asset };
-type MultiItem = { content: string; title: string; on: boolean };
+type MultiItem = { content: string; title: string; note?: string; on: boolean };
 export function CardFields({ card, onChange }: { card: Card; onChange: (card: Card) => void }) {
   const groups = useStore((s) => s.groups);
   const t = useI18n();
@@ -135,6 +135,7 @@ export function ImportModal({
   const [index, setIndex] = useState(0);
   const [multi, setMulti] = useState<MultiItem[] | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [shareCode, setShareCode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [cameraOn, setCameraOn] = useState(false);
@@ -171,11 +172,20 @@ export function ImportModal({
     setError('');
     setMulti(null);
     setSheet(false);
+    setShareCode(false);
     const hits: string[] = [];
+    const shareItems: MultiItem[] = [];
     const failures: string[] = [];
     const undecodable: File[] = [];
     let manifest: ManifestItem[] | null = null;
     let marker = false;
+    let shareMarker = false;
+    const seen = new Set<string>();
+    const pushItem = (item: MultiItem) => {
+      if (seen.has(item.content)) return;
+      seen.add(item.content);
+      shareItems.push(item);
+    };
     for (const file of files.slice(0, 30)) {
       if (
         !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) ||
@@ -195,6 +205,19 @@ export function ImportModal({
           continue;
         }
         for (const content of found) {
+          // A #nq2= share code carries full cards; #nq1= footers only carry names.
+          const shared = await parseShareLink(content);
+          if (shared) {
+            shareMarker = true;
+            for (const [title, sharedContent, note] of shared)
+              pushItem({
+                content: sharedContent,
+                title: title || makeCard(sharedContent).title,
+                note,
+                on: true,
+              });
+            continue;
+          }
           const link = parseAppLink(content);
           if (link) {
             marker = true;
@@ -206,14 +229,15 @@ export function ImportModal({
       }
     }
     if (!alive.current) return;
-    if (hits.length > 60) {
+    const total = hits.length + shareItems.length;
+    if (total > 60) {
       setBusy(false);
       setError(t.importDlg.tooManyCodes);
       return;
     }
-    if (undecodable.length && hits.length)
+    if (undecodable.length && total)
       failures.push(fmt(t.importDlg.skippedUndecodable, { n: undecodable.length }));
-    if (!hits.length) {
+    if (!total) {
       if (marker) {
         setBusy(false);
         setError(t.importDlg.sheetOnlyMarker);
@@ -229,20 +253,24 @@ export function ImportModal({
       });
       setDrafts(next);
       setIndex(0);
-    } else if (hits.length === 1 && !marker) {
+    } else if (hits.length === 1 && !marker && !shareItems.length) {
       setDrafts([{ card: makeCard(hits[0], groupId) }]);
       setIndex(0);
     } else {
-      // 一键导入：分享图（或任何含多个二维码的图片）整体识别，清单还原名称。
+      // 一键导入：分享码自带名称与备注；分享图由清单还原名称。
       const names = new Map((manifest ?? []).map(([title, hash]) => [hash, title]));
-      setMulti(
-        hits.map((content) => ({
+      for (const content of hits) {
+        if (seen.has(content)) continue;
+        seen.add(content);
+        shareItems.push({
           content,
           title: names.get(contentHash(content)) ?? makeCard(content).title,
           on: true,
-        })),
-      );
+        });
+      }
+      setMulti(shareItems);
       setSheet(marker);
+      setShareCode(shareMarker);
     }
     setBusy(false);
     setError(failures.join('；'));
@@ -276,9 +304,26 @@ export function ImportModal({
           video.current,
           (result) => {
             if (stopped) return;
-            setMulti(null);
-            setDrafts([{ card: makeCard(result.data, groupId) }]);
-            setCameraOn(false);
+            // Camera hits one payload; a share link expands into its full card list.
+            void parseShareLink(result.data).then((shared) => {
+              if (stopped) return;
+              if (shared?.length) {
+                setMulti(
+                  shared.map(([title, content, note]) => ({
+                    content,
+                    title: title || makeCard(content).title,
+                    note,
+                    on: true,
+                  })),
+                );
+                setSheet(false);
+                setShareCode(true);
+              } else {
+                setMulti(null);
+                setDrafts([{ card: makeCard(result.data, groupId) }]);
+              }
+              setCameraOn(false);
+            });
           },
           { returnDetailedScanResult: true, preferredCamera: 'environment' },
         );
@@ -314,6 +359,34 @@ export function ImportModal({
     }
     setBusy(true);
     setError('');
+    // A pasted share link expands into its card list; plain lines stay line-by-line.
+    const shared: MultiItem[] = [];
+    const plain: string[] = [];
+    for (const line of lines) {
+      const items = await parseShareLink(line);
+      if (items?.length)
+        shared.push(
+          ...items.map(([title, content, note]) => ({
+            content,
+            title: title || makeCard(content).title,
+            note,
+            on: true,
+          })),
+        );
+      else plain.push(line);
+    }
+    if (shared.length) {
+      if (alive.current) {
+        setMulti([
+          ...shared,
+          ...plain.map((line) => ({ content: line, title: makeCard(line).title, on: true })),
+        ]);
+        setSheet(false);
+        setShareCode(true);
+        setBusy(false);
+      }
+      return;
+    }
     const next = await Promise.all(
       lines.map(async (line) => {
         const card = makeCard(line, groupId);
@@ -359,6 +432,7 @@ export function ImportModal({
         const card = makeCard(content, groupId);
         const title = item.title.trim().slice(0, 200);
         if (title) card.title = title;
+        if (item.note) card.note = item.note.trim().slice(0, 4000);
         entries.push({ card });
         contents.add(content);
       }
@@ -369,7 +443,8 @@ export function ImportModal({
       }
       await useStore.getState().saveMany(entries);
       notify(
-        fmt(t.toast.savedN, { n: entries.length }) + (skipped ? fmt(t.toast.skipped, { n: skipped }) : ''),
+        fmt(t.toast.savedN, { n: entries.length }) +
+          (skipped ? fmt(t.toast.skipped, { n: skipped }) : ''),
       );
       onClose();
     } catch (e) {
@@ -424,7 +499,11 @@ export function ImportModal({
   return (
     <Modal
       title={
-        multi ? t.importDlg.importTitle : drafts.length ? t.importDlg.confirmTitle : t.importDlg.title
+        multi
+          ? t.importDlg.importTitle
+          : drafts.length
+            ? t.importDlg.confirmTitle
+            : t.importDlg.title
       }
       onClose={() => {
         if (!busy) onClose();
@@ -440,6 +519,7 @@ export function ImportModal({
                 onClick={() => {
                   setMulti(null);
                   setSheet(false);
+                  setShareCode(false);
                   setError('');
                 }}
               >
@@ -449,12 +529,20 @@ export function ImportModal({
               <span>{fmt(t.importDlg.codesFound, { n: multi.length })}</span>
               <div />
             </div>
-            {sheet && (
+            {(sheet || shareCode) && (
               <div className="sheet-banner">
-                <span className="sheet-badge">
-                  <QrCode size={11} />
-                  {t.importDlg.sheetBadge}
-                </span>
+                {sheet && (
+                  <span className="sheet-badge">
+                    <QrCode size={11} />
+                    {t.importDlg.sheetBadge}
+                  </span>
+                )}
+                {shareCode && (
+                  <span className="sheet-badge">
+                    <QrCode size={11} />
+                    {t.importDlg.shareBadge}
+                  </span>
+                )}
               </div>
             )}
             <ul className="multi-list" ref={multiList}>
@@ -466,12 +554,18 @@ export function ImportModal({
                       checked={item.on}
                       disabled={busy}
                       onChange={(e) =>
-                        setMulti(multi.map((it, j) => (i === j ? { ...it, on: e.target.checked } : it)))
+                        setMulti(
+                          multi.map((it, j) => (i === j ? { ...it, on: e.target.checked } : it)),
+                        )
                       }
                     />
                     <span className="multi-text">
                       <strong>{item.title}</strong>
-                      <small>{domain(item.content)}</small>
+                      <small>
+                        {item.note
+                          ? domain(item.content) + ' · ' + item.note.slice(0, 40)
+                          : domain(item.content)}
+                      </small>
                     </span>
                   </label>
                 </li>
@@ -614,12 +708,16 @@ export function ImportModal({
         </span>
         <button
           className="button primary"
-          disabled={
-            busy || (!!multi && !onCount) || (!multi && !drafts.length && tab !== 'link')
-          }
+          disabled={busy || (!!multi && !onCount) || (!multi && !drafts.length && tab !== 'link')}
           onClick={() => void (multi ? saveMulti() : drafts.length ? save() : fromText())}
         >
-          {multi ? <ListPlus size={16} /> : drafts.length ? <Check size={16} /> : <Link2 size={16} />}{' '}
+          {multi ? (
+            <ListPlus size={16} />
+          ) : drafts.length ? (
+            <Check size={16} />
+          ) : (
+            <Link2 size={16} />
+          )}{' '}
           {multi
             ? fmt(t.importDlg.importN, { n: onCount })
             : drafts.length

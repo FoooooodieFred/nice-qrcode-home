@@ -24,6 +24,7 @@ import {
   Plus,
   Search,
   Settings2,
+  Share2,
   Star,
   Trash2,
   X,
@@ -47,6 +48,7 @@ import {
 } from './anim';
 import { ImportModal, EditModal } from './components/ImportModal';
 import { QrModal } from './components/QrModal';
+import { ShareModal } from './components/ShareModal';
 import { SettingsModal, GroupsModal } from './components/SettingsModal';
 import { CollectionCard } from './components/CollectionCard';
 type View = 'all' | 'favorites' | string;
@@ -67,6 +69,7 @@ export default function App() {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [sharing, setSharing] = useState<{ title: string; cards: Card[] } | null>(null);
   const search = useRef<HTMLInputElement>(null);
   const searchField = useRef<HTMLDivElement>(null);
   const sections = useRef<Map<string, HTMLElement>>(new Map());
@@ -263,6 +266,13 @@ export default function App() {
   const exitSelecting = () => {
     setSelecting(false);
     setSelected(new Set());
+  };
+  const shareList = (title: string, list: Card[]) => {
+    if (!list.length) {
+      notify(t.toast.noneToExport);
+      return;
+    }
+    setSharing({ title, cards: list });
   };
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -509,6 +519,14 @@ export default function App() {
                       </button>
                       <button
                         className="icon-button"
+                        aria-label={fmt(t.aria.shareGroupQr, { name: group.name })}
+                        title={t.aria.shareGroupQrTitle}
+                        onClick={() => shareList(group.name, items)}
+                      >
+                        <Share2 size={15} />
+                      </button>
+                      <button
+                        className="icon-button"
                         aria-label={fmt(t.aria.addToGroup, { name: group.name })}
                         onClick={() => {
                           setView(group.id || 'ungrouped');
@@ -568,6 +586,15 @@ export default function App() {
       {modal === 'groups' && <GroupsModal onClose={() => setModal(null)} notify={notify} />}
       {editing && <EditModal card={editing} onClose={() => setEditing(null)} notify={notify} />}
       {qr && <QrModal card={qr} onClose={() => setQr(null)} notify={notify} />}
+      {sharing && (
+        <ShareModal
+          title={sharing.title}
+          cards={sharing.cards}
+          assets={store.assets}
+          onClose={() => setSharing(null)}
+          notify={notify}
+        />
+      )}
       {selecting && (
         <BatchBar
           count={selected.size}
@@ -579,6 +606,7 @@ export default function App() {
           onStar={() => void run(batchStar)}
           onMove={(gid) => void run(() => batchMove(gid))}
           onExport={() => exportSheet(t.sheet.selectionTitle, selectedCards)}
+          onShare={() => shareList(t.sheet.selectionTitle, selectedCards)}
           onDelete={() => void run(batchDelete)}
           onDone={exitSelecting}
         />
@@ -626,6 +654,7 @@ function BatchBar({
   onStar,
   onMove,
   onExport,
+  onShare,
   onDelete,
   onDone,
 }: {
@@ -638,6 +667,7 @@ function BatchBar({
   onStar: () => void;
   onMove: (groupId: string) => void;
   onExport: () => void;
+  onShare: () => void;
   onDelete: () => void;
   onDone: () => void;
 }) {
@@ -679,6 +709,10 @@ function BatchBar({
       <button onClick={onExport} disabled={!count || busy}>
         <ArrowDownToLine size={14} />
         {t.batch.exportQr}
+      </button>
+      <button onClick={onShare} disabled={!count || busy}>
+        <Share2 size={14} />
+        {t.batch.share}
       </button>
       <button className="danger" onClick={onDelete} disabled={!count || busy}>
         <Trash2 size={14} />

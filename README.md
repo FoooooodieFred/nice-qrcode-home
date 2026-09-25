@@ -11,6 +11,8 @@
 - **小程序码**：微信 / 支付宝花码无法解码（私有格式），自动保留原图供扫码，标注为「小程序」类型
 - **卡片管理**：分组、星标、标签、搜索过滤、拖拽排序、**多选批量操作**（星标 / 移动分组 / 删除）
 - **二维码与分享**：三种样式，PNG / SVG 下载、复制图片、系统分享、分享卡，**一键导出整组二维码合集**
+- **多卡分享**：把多张二维码交给系统分享面板逐张发送；或生成一张「分享码」，把网址、名称、备注打包进单个二维码，对方扫码即可**一键导入**
+- **放映模式**：全屏黑底大屏展示二维码或小程序原图，保持屏幕常亮，适合出示给他人扫码
 - **高度自定义**：明暗主题、强调色、背景、每行卡片数、圆角、密度、二维码尺寸
 - **中英双语**：设置里一键切换语言
 - **本地优先**：IndexedDB 存储，无账号、无同步、无遥测；JSON 备份一键导出 / 恢复
@@ -60,6 +62,8 @@ A minimalist black-and-white home for your links and QR codes — fully front-en
 - **Mini-program codes**: WeChat / Alipay proprietary codes cannot be decoded — the original image is kept for scanning, tagged as "Mini program"
 - **Card management**: groups, stars, tags, search & filters, drag-to-sort, **multi-select batch actions** (star / move / delete)
 - **QR & sharing**: three styles, PNG / SVG download, copy image, system share, share cards, and **one-click group QR sheet export**
+- **Multi-card share**: hand several QR images to the system share sheet at once, or pack URLs, names and notes into a single **share code** that others scan to **import in one tap**
+- **Stage mode**: present a QR code or mini-program original on a fullscreen dark stage with the screen kept awake — made for showing codes to other people
 - **Highly customizable**: light/dark themes, accent color, background, cards per row, radius, density, QR size
 - **Bilingual**: switch between 中文 and English in settings
 - **Local-first**: IndexedDB storage — no accounts, no sync, no telemetry; one-click JSON backup & restore

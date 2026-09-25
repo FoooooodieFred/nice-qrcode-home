@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Download, Image, Link2, Share2 } from 'lucide-react';
+import { Copy, Download, Image, Link2, Maximize2, Share2 } from 'lucide-react';
 import type QRCodeStyling from 'qr-code-styling';
 import { Modal } from './Modal';
 import { AssetImage } from './AssetImage';
+import { StageModal } from './StageModal';
 import { useStore } from '../store';
 import type { Card, Settings } from '../core/types';
 import { qrRenderer } from '../core/qr';
@@ -27,6 +28,7 @@ export function QrModal({
   const qrSize = Number(settings.extensions['qrSize'] ?? 272);
   const [original, setOriginal] = useState(!!asset && (!card.rawContent || card.type === 'mini'));
   const [style, setStyle] = useState<Settings['qrStyle']>(settings.qrStyle);
+  const [stage, setStage] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const container = useRef<HTMLDivElement>(null);
@@ -214,6 +216,10 @@ export function QrModal({
             <Image size={16} />
             {t.qrDlg.shareCard}
           </button>
+          <button className="button" disabled={!ready} onClick={() => setStage(true)}>
+            <Maximize2 size={16} />
+            {t.qrDlg.stage}
+          </button>
         </div>
         {card.rawContent && (
           <button
@@ -253,6 +259,9 @@ export function QrModal({
           </p>
         )}
       </div>
+      {stage && (
+        <StageModal card={card} asset={asset} original={original} onClose={() => setStage(false)} />
+      )}
     </Modal>
   );
 }

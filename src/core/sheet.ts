@@ -30,6 +30,30 @@ function wrapText(
 }
 
 /**
+ * The best image blob for a card: mini-program codes keep their preserved
+ * original, everything else with content gets a freshly rendered QR, and the
+ * original asset is the last resort. Returns null when nothing works.
+ */
+export async function cardImageBlob(
+  card: Card,
+  assets: Asset[],
+  style: Settings['qrStyle'],
+): Promise<Blob | null> {
+  try {
+    const asset = assets.find((a) => a.id === card.imageAssetId);
+    if (card.type === 'mini' && asset) return asset.blob;
+    if (card.rawContent.trim()) {
+      const renderer = await qrRenderer.create(card.rawContent, style);
+      const data = await renderer.getRawData('png');
+      if (data instanceof Blob) return data;
+    }
+    return asset?.blob ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Compose a minimalist black-and-white sheet of QR codes and download it as PNG.
  * Cards with rawContent get a freshly rendered QR; mini-program cards fall back
  * to their preserved original image. The footer carries the app QR whose link
@@ -51,19 +75,10 @@ export async function exportQrSheet({
   const bitmaps = (
     await Promise.all(
       cards.map(async (card) => {
+        const blob = await cardImageBlob(card, assets, style);
+        if (!blob) return null;
         try {
-          const asset = assets.find((a) => a.id === card.imageAssetId);
-          const preferOriginal = card.type === 'mini' && asset;
-          let blob: Blob | null = null;
-          if (preferOriginal && asset) blob = asset.blob;
-          else if (card.rawContent.trim()) {
-            const renderer = await qrRenderer.create(card.rawContent, style);
-            const data = await renderer.getRawData('png');
-            if (data instanceof Blob) blob = data;
-          } else if (asset) blob = asset.blob;
-          if (!blob) return null;
-          const bitmap = await createImageBitmap(blob);
-          return { card, bitmap };
+          return { card, bitmap: await createImageBitmap(blob) };
         } catch {
           return null;
         }
